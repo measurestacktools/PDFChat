@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PDFChat — Chat with any PDF</title>
+<meta name="description" content="PDFChat — upload a PDF and chat with it. Local RAG answers grounded in your document, powered by Groq." />
+<link rel="stylesheet" href="/static/styles.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23059669'/%3E%3Cpath d='M9 5h9l5 5v17H9z' fill='white'/%3E%3Cpath d='M18 5v5h5' fill='%23a7f3d0'/%3E%3Cpath d='M12 16h8M12 19.5h8M12 23h5' stroke='%23059669' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E" />
+</head>
+<body>
+<div class="bg-glow" aria-hidden="true"><span class="glow glow-a"></span><span class="glow glow-b"></span></div>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="30" height="30"><rect width="32" height="32" rx="8" fill="#059669"/><path d="M9 5h9l5 5v17H9z" fill="white"/><path d="M18 5v5h5" fill="#a7f3d0"/><path d="M12 16h8M12 19.5h8M12 23h5" stroke="#059669" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </span>
+      <span class="brand-text"><strong>PDFChat</strong><em>pdf intelligence</em></span>
+    </div>
+    <div class="header-actions">
+      <div class="status-pill" id="apiStatus" role="status" aria-live="polite">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">Checking API…</span>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm settings-btn" id="settingsBtn" aria-haspopup="dialog" aria-label="Open API settings">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Settings
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap layout">
+  <!-- SIDEBAR -->
+  <aside class="sidebar" aria-label="Document panel">
+    <div class="side-card" id="docEmpty">
+      <div class="doc-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>
+      </div>
+      <h2>No document yet</h2>
+      <p class="muted">Upload a text-based PDF to start chatting with it. Scanned/image-only PDFs aren't supported (no OCR).</p>
+      <div class="req-list">
+        <span>PDF only</span><span>up to <b id="maxMbSide">25MB</b></span><span>text-based</span>
+      </div>
+    </div>
+
+    <div class="side-card doc-card" id="docCard" hidden>
+      <div class="doc-head">
+        <div class="doc-icon sm" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+        </div>
+        <div class="doc-title"><strong id="docName">document.pdf</strong><span id="docSub">—</span></div>
+      </div>
+      <dl class="doc-meta">
+        <div><dt>Pages</dt><dd id="docPages">—</dd></div>
+        <div><dt>Size</dt><dd id="docSize">—</dd></div>
+        <div><dt>Passages</dt><dd id="docChunks">—</dd></div>
+        <div><dt>Status</dt><dd class="ready" id="docStatus">Ready</dd></div>
+      </dl>
+      <button type="button" class="btn btn-ghost btn-sm btn-block" id="removeDocBtn">✕ Remove document</button>
+    </div>
+
+    <div class="side-card how-card">
+      <h3>How it works</h3>
+      <ol>
+        <li><b>Upload</b> a text-based PDF</li>
+        <li><b>PDFChat reads it</b> and builds a local search index</li>
+        <li><b>Ask anything</b> — answers come only from your document, with page sources</li>
+      </ol>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <section class="maincol">
+    <!-- Empty / upload state -->
+    <div class="panel upload-hero" id="uploadHero">
+      <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Upload a PDF. Drag and drop or press Enter to browse.">
+        <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden />
+        <div class="dz-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
+        </div>
+        <p class="dz-title">Drop your PDF here</p>
+        <p class="dz-sub">or</p>
+        <button type="button" class="btn btn-primary" id="browseBtn">Choose PDF</button>
+        <p class="dz-formats" id="formatsLine">PDF only · up to 25MB · text-based (no scans)</p>
+      </div>
+      <p class="field-error" id="uploadError" role="alert" hidden></p>
+
+      <div class="processing" id="processing" hidden aria-live="polite">
+        <div class="proc-steps">
+          <span class="proc-step" data-step="upload">Uploading</span>
+          <span class="proc-arrow" aria-hidden="true">→</span>
+          <span class="proc-step" data-step="extract">Extracting text</span>
+          <span class="proc-arrow" aria-hidden="true">→</span>
+          <span class="proc-step" data-step="index">Creating index</span>
+          <span class="proc-arrow" aria-hidden="true">→</span>
+          <span class="proc-step" data-step="ready">Ready</span>
+        </div>
+        <div class="proc-bar"><span id="procBarFill"></span></div>
+      </div>
+    </div>
+
+    <!-- Chat workspace -->
+    <div class="panel chat-panel" id="chatPanel" hidden>
+      <div class="chat-head">
+        <h2>Chat with <span id="chatDocName">your document</span></h2>
+        <span class="model-tag" id="modelTag" hidden></span>
+      </div>
+
+      <div class="messages" id="messages" aria-live="polite"></div>
+
+      <p class="suggest-label">Suggested questions</p>
+      <div class="chips" role="group" aria-label="Suggested questions">
+        <button type="button" class="chip" data-q="Summarize this document in a few short paragraphs.">Summarize this document</button>
+        <button type="button" class="chip" data-q="What are the main points of this document? List them as bullets.">What are the main points?</button>
+        <button type="button" class="chip" data-q="Find all important dates, deadlines, and time periods mentioned in this document.">Find the important dates</button>
+      </div>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <label class="sr-only" for="question">Ask a question about the document</label>
+        <input type="text" id="question" class="text-input" maxlength="1000" placeholder="Ask anything about this PDF…" />
+        <button type="submit" class="btn btn-primary" id="sendBtn" aria-label="Send question">
+          <span class="btn-label">Send</span>
+          <span aria-hidden="true">➤</span>
+        </button>
+      </form>
+      <p class="field-error" id="chatError" role="alert" hidden></p>
+      <p class="ground-note">Answers come only from your document — with page sources. If it isn't in the PDF, PDFChat says so.</p>
+    </div>
+
+    <footer class="foot">
+      <p>PDFChat runs locally — your PDF stays in this server's memory and is never uploaded anywhere except your own Groq API key. <span class="muted">Never share your <code>.env</code> file.</span></p>
+    </footer>
+  </section>
+</main>
+
+<script src="/static/app.js" defer></script>
+
+<div class="modal-backdrop" id="settingsModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-head">
+      <h2 id="settingsTitle">API Settings</h2>
+      <button type="button" class="btn btn-ghost btn-sm" id="settingsClose" aria-label="Close settings">✕</button>
+    </div>
+    <p class="muted modal-sub">Paste your Groq API key — no <code>.env</code> editing needed. It's verified instantly, kept only in the server's memory, and never shown again.</p>
+    <div class="key-state" id="keyState" role="status">Checking…</div>
+    <form id="keyForm" autocomplete="off">
+      <label class="field-label" for="keyInput">Groq API key</label>
+      <input type="password" id="keyInput" class="text-input" placeholder="gsk_…" autocomplete="off" spellcheck="false" />
+    </form>
+    <p class="field-error" id="keyError" role="alert" hidden></p>
+    <p class="key-ok" id="keyOk" role="status" hidden></p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-primary" id="keySave">
+        <span class="btn-label">Save key</span>
+        <span class="spinner" id="keySpinner" hidden aria-hidden="true"></span>
+      </button>
+      <button type="button" class="btn btn-ghost" id="keyRemove">Remove</button>
+    </div>
+    <p class="muted modal-foot">No key yet? <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Create a free one at console.groq.com/keys</a>. The key clears when the server restarts — put it in <code>.env</code> to keep it permanently.</p>
+  </div>
+</div>
+</body>
+</html>

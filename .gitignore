@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.log
+.DS_Store
+# Uploaded PDFs must never be committed (the app keeps them in memory only).
+*.pdf
