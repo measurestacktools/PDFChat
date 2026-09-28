@@ -1,6 +1,6 @@
 # PDFChat — Chat with any PDF
 
-PDFChat is a polished, ready-to-run **AI PDF assistant**. Upload any text-based PDF, ask questions about it, and get answers grounded **only** in your document — with real page-number sources. Running on Groq's ultra-fast inference.
+PDFChat is a polished, ready-to-run **AI PDF assistant**. Upload any text-based PDF, ask questions about it, and get answers from your document first — with real page-number sources — plus clearly labeled general knowledge whenever the PDF falls short. Running on Groq's ultra-fast inference.
 
 No database. No frontend framework. No fake responses. Just a clean FastAPI backend with a real local RAG pipeline + a premium document-workspace interface + your own Groq API key.
 
@@ -8,9 +8,9 @@ No database. No frontend framework. No fake responses. Just a clean FastAPI back
 
 - Drag-and-drop PDF upload with staged processing display (Uploading → Extracting text → Creating index → Ready)
 - Document sidebar: filename, page count, file size, passage count, status, one-click remove
-- Chat workspace: message history, typing animation, suggested questions, page-source chips under every answer
-- Real RAG: per-page extraction, sentence-aware chunking, local TF-IDF retrieval — the model never gets the whole PDF blindly
-- Grounded answers: if the document doesn't contain the answer, PDFChat says so instead of hallucinating
+- Chat workspace: message history, typing animation, suggested questions, page-source chips on document answers
+- Real RAG: per-page extraction, sentence-aware chunking, local TF-IDF retrieval — the model uses your document first, never blindly
+- Smart answers: document facts come with page sources; questions the PDF can't answer fall back to clearly labeled general knowledge — the AI always answers, never stonewalls you
 - Settings panel: paste your Groq key in the UI, verified instantly, kept only in server memory
 - Live API status pill, beginner-friendly errors for every failure mode
 - Responsive desktop + mobile, zero-dependency retrieval (works offline except the Groq call)
@@ -110,12 +110,13 @@ Your question
    │  6. Chunks + question + short chat history sent to Groq
    │     (max ~12,000 chars of context, temperature 0.3 for factuality)
    ▼
-Grounded answer + page sources (e.g. p. 4, p. 7)
+Document answer + page sources (e.g. p. 4, p. 7) — or, when the PDF has
+nothing relevant, a clearly labeled general-knowledge answer (never silence)
 ```
 
 ## RAG in simple language
 
-RAG (Retrieval-Augmented Generation) means the AI doesn't guess from memory: for each question, PDFChat **retrieves** the most relevant passages from *your* document, then the AI **generates** its answer from those passages only. Retrieval here is TF-IDF keyword search — a classic, dependency-free technique that runs entirely on your machine (no downloads, no external embedding service). The system prompt additionally forbids the model from using outside knowledge and from inventing page numbers.
+RAG (Retrieval-Augmented Generation) means the AI doesn't guess from memory: for each question, PDFChat **retrieves** the most relevant passages from *your* document, then the AI **generates** its answer from those passages first. Retrieval here is TF-IDF keyword search — a classic, dependency-free technique that runs entirely on your machine (no downloads, no external embedding service). If the document has nothing relevant, the model answers from general knowledge instead — always labeled with a "General knowledge" badge and never given page sources, so you always know which is which. The system prompt forbids the model from refusing and from inventing page numbers.
 
 Key files:
 
@@ -156,7 +157,7 @@ Key files:
 | `This file could not be read as a PDF` | File is corrupt or not a real PDF — re-export it. |
 | `Unsupported file type` | Only `.pdf` files are accepted. |
 | `PDF is too large` | Split the PDF or raise `MAX_PDF_MB` in `.env` (Groq caps image/file requests at ~20MB). |
-| `I couldn't find that information in this document` | Not an error — the answer genuinely isn't in the PDF. Rephrase or check the document. |
+| `I couldn't find that information in this document` | Legacy phrasing you should rarely see — the app now answers from general knowledge (labeled) instead of refusing. |
 | `Groq rate limit reached` | Wait ~1 minute and retry. |
 | `Model ... was not found` | Groq renamed the model — check https://console.groq.com/docs/models, update `GROQ_MODEL`. |
 

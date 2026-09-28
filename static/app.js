@@ -235,7 +235,7 @@
       hide(processing);
       procBarFill.style.width = "8%";
       renderDoc(data);
-      addMessage("ai", "I've read **" + data.filename + "** (" + data.pages + " pages, " + data.chunks + " passages indexed). Ask me anything about it — I'll answer only from the document and show page sources.", []);
+      addMessage("ai", "I've read **" + data.filename + "** (" + data.pages + " pages, " + data.chunks + " passages indexed). Ask me anything — I'll answer from the document with page sources, or from general knowledge (clearly marked) when the PDF falls short.", []);
       if (data.model) { /* model shown per answer instead */ }
     } catch {
       clearInterval(stageTimer);
@@ -306,7 +306,7 @@
       .replace(/\[p\.\s*(\d+)\]/g, "[p. $1]");
   }
   function scrollChat() { messages.scrollTop = messages.scrollHeight; }
-  function addMessage(kind, text, sources) {
+  function addMessage(kind, text, sources, scope) {
     const div = document.createElement("div");
     if (kind === "user") {
       div.className = "msg user";
@@ -316,8 +316,16 @@
       div.textContent = text;
     } else {
       div.className = "msg ai";
-      div.innerHTML = renderLite(text);
-      if (sources && sources.length) {
+      if (scope === "general") {
+        const badge = document.createElement("div");
+        badge.className = "scope-badge general";
+        badge.textContent = "General knowledge — not from your PDF";
+        div.appendChild(badge);
+      }
+      const body = document.createElement("div");
+      body.innerHTML = renderLite(text);
+      div.appendChild(body);
+      if (sources && sources.length && scope !== "general") {
         const s = document.createElement("div");
         s.className = "sources";
         const label = document.createElement("span");
@@ -372,7 +380,7 @@
         addMessage("error", data.error || ("Request failed (HTTP " + res.status + "). Please try again."));
         return;
       }
-      addMessage("ai", data.answer || "(empty response)", data.sources || []);
+      addMessage("ai", data.answer || "(empty response)", data.sources || [], data.scope || "document");
       if (data.model) {
         modelTag.textContent = "◈ " + data.model;
         modelTag.hidden = false;
