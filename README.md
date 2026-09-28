@@ -36,7 +36,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Run the automated test suite (needs no API key, no network for most tests):
+Run the automated test suite (needs no API key; only the key-verification test needs internet, and it skips itself offline):
 
 ```bash
 pip install -r requirements-test.txt
@@ -155,7 +155,7 @@ Key files:
 | `No readable text could be extracted` | Scanned/image-only PDF — use a text-based PDF (no OCR included). |
 | `This file could not be read as a PDF` | File is corrupt or not a real PDF — re-export it. |
 | `Unsupported file type` | Only `.pdf` files are accepted. |
-| `PDF is too large` | Split the PDF or lower `MAX_PDF_MB` limits in `app.py`. |
+| `PDF is too large` | Split the PDF or raise `MAX_PDF_MB` in `.env` (Groq caps image/file requests at ~20MB). |
 | `I couldn't find that information in this document` | Not an error — the answer genuinely isn't in the PDF. Rephrase or check the document. |
 | `Groq rate limit reached` | Wait ~1 minute and retry. |
 | `Model ... was not found` | Groq renamed the model — check https://console.groq.com/docs/models, update `GROQ_MODEL`. |

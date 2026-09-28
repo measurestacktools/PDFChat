@@ -270,7 +270,21 @@
 
   /* ---------- chat ---------- */
   function renderLite(text) {
-    const lines = escapeHtml(text).split("\n");
+    // Fenced code blocks first (```lang ... ```), then inline markdown.
+    const parts = escapeHtml(text).split(/```/);
+    let html = "";
+    for (let i = 0; i < parts.length; i++) {
+      if (i % 2 === 1) {
+        const code = parts[i].replace(/^\s*[a-zA-Z0-9+#-]+\n/, "").replace(/^\n/, "");
+        html += "<pre><code>" + code + "</code></pre>";
+      } else {
+        html += renderBody(parts[i]);
+      }
+    }
+    return html;
+  }
+  function renderBody(escaped) {
+    const lines = escaped.split("\n");
     let html = "", inList = false;
     for (const line of lines) {
       const t = line.trim();

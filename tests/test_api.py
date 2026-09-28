@@ -6,6 +6,8 @@ Live Groq tests are NOT included here; see README for the manual live check.
 import io
 import os
 
+import httpx
+import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
@@ -45,9 +47,20 @@ def test_static_assets():
         assert r.status_code == 200 and len(r.text) > 1000
 
 
+def _groq_reachable() -> bool:
+    """Key verification calls the live Groq API — skip that assertion offline."""
+    try:
+        httpx.get("https://api.groq.com/openai/v1/models", timeout=5.0)
+        return True
+    except Exception:
+        return False
+
+
 def test_key_validation():
     c = _client()
     assert c.post("/api/key", json={"key": ""}).status_code == 400
+    if not _groq_reachable():
+        pytest.skip("no network: live key-verification test skipped")
     r = c.post("/api/key", json={"key": "gsk_fake_key_for_tests"})
     assert r.status_code == 401
     assert c.get("/api/status").json()["configured"] is False
