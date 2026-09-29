@@ -374,35 +374,18 @@ def _friendly_groq_error(exc: Exception) -> tuple[int, str]:
     return 500, f"Unexpected server error: {str(exc)[:300]}"
 
 
-GENERAL_PREFIX = "[General knowledge — not from your document]"
-REFUSAL_PHRASE = "couldn't find that information in this document"
-
 SYSTEM_PROMPT = (
-    "You are PDFChat, a helpful document assistant. Always answer the user's "
-    "question — never refuse, and never reply that information is missing. Rules:\n"
-    "1. FIRST look in the document excerpts below. If they contain the answer, "
-    "base every claim on them and cite the page like [p. 4].\n"
-    "2. If the excerpts do NOT contain the answer, answer from your own general "
-    "knowledge instead — but start your answer with exactly this line:\n"
-    + GENERAL_PREFIX + "\n"
-    "3. Never invent page numbers, dates, names, or figures. Never attach page "
-    "citations to general-knowledge answers.\n"
-    "4. Keep answers focused; use short paragraphs or bullets where helpful."
+    "You are PDFChat, a helpful assistant that answers from the user's document "
+    "and from your own knowledge together. Rules:\n"
+    "1. Use the document excerpts below whenever they are relevant, and cite "
+    "the page like [p. 4] for facts taken from them.\n"
+    "2. Also use your own general knowledge freely — combine it with the "
+    "document to give the most complete, useful answer.\n"
+    "3. Always answer the question. Never refuse, and never say information "
+    "is missing — just give your best answer.\n"
+    "4. Never invent page numbers: only cite pages that appear in the excerpts.\n"
+    "5. Keep answers focused; use short paragraphs or bullets where helpful."
 )
-
-
-def _split_scope(answer: str) -> tuple[bool, str]:
-    """Detect a general-knowledge answer. Returns (is_general, clean_answer).
-
-    Page sources are only ever attached to document-grounded answers.
-    """
-    if answer.startswith(GENERAL_PREFIX):
-        return True, answer[len(GENERAL_PREFIX):].strip()
-    if REFUSAL_PHRASE in answer:
-        # Legacy refusal phrasing (should no longer occur): treat as
-        # ungrounded and never attach page sources to it.
-        return True, answer
-    return False, answer
 
 
 def _build_context(hits: list[tuple[int, float]], chunks: list[dict]) -> tuple[str, list[int]]:
@@ -566,10 +549,10 @@ async def api_upload(request: Request, file: UploadFile | None = File(default=No
 
 @app.post("/api/chat")
 def api_chat(payload: ChatPayload):
-    """Answer from the document when possible, otherwise from general knowledge.
+    """Answer using the document and general knowledge together.
 
-    Document answers carry real page sources. General answers are clearly
-    marked and never carry page sources. The AI always answers — no refusals.
+    Retrieved pages are passed as context and listed as sources.
+    The AI always answers — no refusals, no labels.
     """
     global _doc
     question = (payload.question or "").strip()
@@ -604,16 +587,12 @@ def api_chat(payload: ChatPayload):
         messages.append({"role": "user", "content": turn["q"]})
         messages.append({"role": "assistant", "content": turn["a"]})
 
-    scope = "document"
     pages: list[int] = []
     if not hits:
         # Nothing relevant in the document: answer from general knowledge.
-        scope = "general"
         messages.append({
             "role": "user",
-            "content": (
-                "My document has nothing relevant to this question, "
-                f"so answer from your own general knowledge: {question}"),
+            "content": f"Answer from your own general knowledge: {question}",
         })
     else:
         context, pages = _build_context(hits, chunks)
@@ -621,10 +600,7 @@ def api_chat(payload: ChatPayload):
             "role": "user",
             "content": (
                 f"Document excerpts relevant to my question:\n\n{context}\n\n"
-                f"My question: {question}\n\n"
-                "Answer from the excerpts if they contain the answer, citing pages "
-                "like [p. N]. Otherwise answer from general knowledge, starting "
-                "your answer with exactly this line:\n" + GENERAL_PREFIX),
+                f"My question: {question}"),
         })
 
     try:
@@ -645,20 +621,10 @@ def api_chat(payload: ChatPayload):
         status, msg = _friendly_groq_error(exc)
         return JSONResponse(status_code=status, content={"error": msg})
 
-    is_general, answer = _split_scope(answer)
-    if scope == "document" and is_general:
-        scope = "general"
-        pages = []
-    if not answer:
-        return JSONResponse(
-            status_code=502,
-            content={"error": "The AI returned an empty response. Please try again."})
-
     _doc["history"].append({"q": question, "a": answer})
     return {
         "answer": answer,
         "sources": pages,
-        "scope": scope,
         "chunks_used": len(hits),
         "model": GROQ_MODEL,
     }

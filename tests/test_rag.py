@@ -3,7 +3,7 @@
 Run:  pytest tests/test_rag.py
 These tests need no API key and no network.
 """
-from app import TfIdfIndex, _clean_text, _split_scope, _tokenize, chunk_page
+from app import TfIdfIndex, _clean_text, _tokenize, chunk_page
 
 
 def test_tokenize_lowercases_and_drops_stopwords():
@@ -60,23 +60,3 @@ def test_tfidf_scores_are_bounded_cosine():
     index = TfIdfIndex(chunks)
     for _, score in index.search("solar panels electricity"):
         assert 0.0 < score <= 1.0
-
-
-def test_split_scope_detects_general_prefix():
-    from app import GENERAL_PREFIX
-    is_general, clean = _split_scope(GENERAL_PREFIX + "\nParis is the capital of France.")
-    assert is_general is True
-    assert clean == "Paris is the capital of France."
-    # No page sources may ever ride along with a general answer.
-
-
-def test_split_scope_keeps_document_answers():
-    is_general, clean = _split_scope("The launch was March 14, 2026 [p. 1].")
-    assert is_general is False
-    assert clean == "The launch was March 14, 2026 [p. 1]."
-
-
-def test_split_scope_neutralizes_legacy_refusal():
-    is_general, clean = _split_scope("I couldn't find that information in this document.")
-    assert is_general is True
-    assert "couldn't find" in clean
