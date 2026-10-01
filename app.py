@@ -68,11 +68,12 @@ CHUNK_OVERLAP = 120      # overlap between consecutive chunks
 TOP_K = 4                # chunks sent to the model per question
 MAX_CONTEXT_CHARS = 12_000  # cap on retrieved context sent to Groq
 HISTORY_TURNS = 3        # previous Q/A pairs kept for follow-up questions
+MAX_HISTORY_TURNS = 20   # hard cap on stored turns (memory bound for long sessions)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
-app = FastAPI(title="PDFChat", version="1.0.0")
+app = FastAPI(title="PDFChat", version="1.1.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # In-memory API key entered via the Settings panel in the UI.
@@ -622,6 +623,9 @@ def api_chat(payload: ChatPayload):
         return JSONResponse(status_code=status, content={"error": msg})
 
     _doc["history"].append({"q": question, "a": answer})
+    # Memory bound: long sessions keep only the most recent turns.
+    if len(_doc["history"]) > MAX_HISTORY_TURNS:
+        _doc["history"] = _doc["history"][-MAX_HISTORY_TURNS:]
     return {
         "answer": answer,
         "sources": pages,
@@ -636,6 +640,19 @@ def api_delete_document():
     global _doc
     _doc = None
     return {"ok": True, "message": "Document removed. Upload another PDF to start over."}
+
+
+@app.delete("/api/history")
+def api_delete_history():
+    """Clear the conversation history but keep the document loaded."""
+    global _doc
+    if not _doc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "No document loaded — there is no conversation to clear."},
+        )
+    _doc["history"] = []
+    return {"ok": True, "message": "Conversation cleared. The document is still loaded."}
 
 
 if __name__ == "__main__":

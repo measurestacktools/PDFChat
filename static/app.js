@@ -208,25 +208,45 @@
     }
     show(processing);
     setStep("upload");
-    procBarFill.style.width = "12%";
+    procBarFill.style.width = "5%";
     const stageTimer = setInterval(() => {
-      // Advance the displayed stage while the server works (real phases,
+      // Advance the extract/index stages while the server works (real phases,
       // single request). Timers only move the indicator, never fake results.
-      const w = parseFloat(procBarFill.style.width) || 12;
-      if (w < 30) { markDoneUpto("upload"); procBarFill.style.width = "28%"; }
-      else if (w < 60) { markDoneUpto("extract"); procBarFill.style.width = "58%"; }
+      const w = parseFloat(procBarFill.style.width) || 30;
+      if (w < 60) { markDoneUpto("extract"); procBarFill.style.width = "58%"; }
       else if (w < 88) { markDoneUpto("index"); procBarFill.style.width = "86%"; }
     }, 900);
 
+    // Real bytes-on-the-wire progress for the upload phase via XHR.
+    function postPdf(file) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/upload");
+        xhr.upload.addEventListener("progress", (ev) => {
+          if (ev.lengthComputable && ev.total > 0) {
+            const pct = Math.min(30, 5 + (ev.loaded / ev.total) * 25);
+            markDoneUpto("upload");
+            procBarFill.style.width = pct.toFixed(0) + "%";
+          }
+        });
+        xhr.addEventListener("load", () => {
+          let data = {};
+          try { data = JSON.parse(xhr.responseText || "{}"); } catch { /* fall through */ }
+          resolve({ status: xhr.status, data });
+        });
+        xhr.addEventListener("error", () => reject(new Error("network")));
+        const form = new FormData();
+        form.append("file", file, file.name);
+        xhr.send(form);
+      });
+    }
+
     try {
-      const form = new FormData();
-      form.append("file", file, file.name);
-      const res = await fetch("/api/upload", { method: "POST", body: form });
-      const data = await res.json().catch(() => ({}));
+      const { status, data } = await postPdf(file);
       clearInterval(stageTimer);
-      if (!res.ok) {
+      if (status < 200 || status >= 300) {
         hide(processing);
-        setUploadError(data.error || ("Upload failed (HTTP " + res.status + "). Please try again."));
+        setUploadError(data.error || ("Upload failed (HTTP " + status + "). Please try again."));
         return;
       }
       markDoneUpto("ready");
@@ -268,6 +288,20 @@
     setUploadError("");
   });
 
+  // New thread: wipe conversation history server-side, keep the document.
+  const newThreadBtn = $("newThreadBtn");
+  if (newThreadBtn) {
+    newThreadBtn.addEventListener("click", async () => {
+      setChatError("");
+      try {
+        await fetch("/api/history", { method: "DELETE" });
+      } catch { /* local reset happens regardless */ }
+      messages.innerHTML = "";
+      addMessage("ai", "Fresh page. The document is still loaded — ask me anything.", []);
+      question.focus();
+    });
+  }
+
   /* ---------- chat ---------- */
   function renderLite(text) {
     // Fenced code blocks first (```lang ... ```), then inline markdown.
@@ -286,23 +320,32 @@
   function renderBody(escaped) {
     const lines = escaped.split("\n");
     let html = "", inList = false;
+    const closeList = () => { if (inList) { html += "</ul>"; inList = false; } };
     for (const line of lines) {
       const t = line.trim();
-      if (/^([-*•]\s+)/.test(t)) {
+      let m;
+      if (/^---+$/.test(t) || /^\*\*\*+$/.test(t)) {
+        closeList(); html += "<hr>";
+      } else if ((m = t.match(/^(#{1,3})\s+(.*)$/))) {
+        closeList();
+        const lvl = m[1].length;
+        html += "<h" + lvl + ">" + (m[2] || "…") + "</h" + lvl + ">";
+      } else if (/^([-*•]\s+)/.test(t)) {
         if (!inList) { html += "<ul>"; inList = true; }
         html += "<li>" + t.replace(/^([-*•]\s+)/, "") + "</li>";
       } else if (/^\d+\.\s+/.test(t)) {
         if (!inList) { html += "<ul>"; inList = true; }
         html += "<li>" + t.replace(/^\d+\.\s+/, "") + "</li>";
       } else {
-        if (inList) { html += "</ul>"; inList = false; }
+        closeList();
         if (t === "") html += "<br>";
         else html += "<p style='margin:.4em 0'>" + t + "</p>";
       }
     }
-    if (inList) html += "</ul>";
+    closeList();
     return html
       .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/`([^`\n]+?)`/g, "<code>$1</code>")
       .replace(/\[p\.\s*(\d+)\]/g, "[p. $1]");
   }
   function scrollChat() { messages.scrollTop = messages.scrollHeight; }
