@@ -22,6 +22,7 @@ Docs verified live 2026 (models endpoint + probe calls):
 
 import hashlib
 import io
+import json
 import logging
 import math
 import os
@@ -30,7 +31,7 @@ import time
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from openai import (
     APIConnectionError,
@@ -548,37 +549,12 @@ async def api_upload(request: Request, file: UploadFile | None = File(default=No
     return meta
 
 
-@app.post("/api/chat")
-def api_chat(payload: ChatPayload):
-    """Answer using the document and general knowledge together.
+def _build_chat_messages(question: str) -> tuple[list[dict], list[int], int]:
+    """Build Groq messages + page sources from the loaded document.
 
-    Retrieved pages are passed as context and listed as sources.
-    The AI always answers — no refusals, no labels.
+    Shared by /api/chat and /api/chat/stream so both endpoints use the
+    identical retrieval + prompt construction. Returns (messages, pages, hits).
     """
-    global _doc
-    question = (payload.question or "").strip()
-    if not question:
-        return JSONResponse(
-            status_code=400, content={"error": "Please type a question first."})
-    if len(question) > 1000:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Your question is too long (max 1000 characters). Please shorten it."})
-    if not _doc:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "No document loaded. Upload a PDF first, then ask your question."})
-
-    api_key = _effective_key()
-    if not api_key:
-        return JSONResponse(
-            status_code=401,
-            content={"error": (
-                "No API key configured. Click Settings (top right) to paste your "
-                "Groq key, or copy .env.example to .env, add your key from "
-                "https://console.groq.com/keys, then restart the app.")},
-        )
-
     chunks: list[dict] = _doc["chunks_data"]
     index: TfIdfIndex = _doc["index"]
     hits = index.search(question, TOP_K)
@@ -603,6 +579,52 @@ def api_chat(payload: ChatPayload):
                 f"Document excerpts relevant to my question:\n\n{context}\n\n"
                 f"My question: {question}"),
         })
+    return messages, pages, len(hits)
+
+
+def _validate_chat_request(payload: ChatPayload) -> tuple[str | None, JSONResponse | None]:
+    """Shared validation for /api/chat and /api/chat/stream.
+
+    Returns (question, None) on success, or (None, error_response) on failure.
+    """
+    question = (payload.question or "").strip()
+    if not question:
+        return None, JSONResponse(
+            status_code=400, content={"error": "Please type a question first."})
+    if len(question) > 1000:
+        return None, JSONResponse(
+            status_code=400,
+            content={"error": "Your question is too long (max 1000 characters). Please shorten it."})
+    if not _doc:
+        return None, JSONResponse(
+            status_code=400,
+            content={"error": "No document loaded. Upload a PDF first, then ask your question."})
+    api_key = _effective_key()
+    if not api_key:
+        return None, JSONResponse(
+            status_code=401,
+            content={"error": (
+                "No API key configured. Click Settings (top right) to paste your "
+                "Groq key, or copy .env.example to .env, add your key from "
+                "https://console.groq.com/keys, then restart the app.")},
+        )
+    return question, None
+
+
+@app.post("/api/chat")
+def api_chat(payload: ChatPayload):
+    """Answer using the document and general knowledge together.
+
+    Retrieved pages are passed as context and listed as sources.
+    The AI always answers — no refusals, no labels.
+    """
+    global _doc
+    question, err = _validate_chat_request(payload)
+    if err is not None:
+        return err
+
+    api_key = _effective_key()
+    messages, pages, hits_len = _build_chat_messages(question)
 
     try:
         client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)
@@ -629,9 +651,81 @@ def api_chat(payload: ChatPayload):
     return {
         "answer": answer,
         "sources": pages,
-        "chunks_used": len(hits),
+        "chunks_used": hits_len,
         "model": GROQ_MODEL,
     }
+
+
+@app.post("/api/chat/stream")
+def api_chat_stream(payload: ChatPayload):
+    """Streaming variant of /api/chat (Server-Sent Events).
+
+    Same request shape as /api/chat. Response is ``text/event-stream``:
+
+    - token chunks: ``data: {"delta": "<token text>"}\\n\\n``
+    - final event: ``event: done\\ndata: {"answer":..., "sources":[...],
+      "chunks_used":N, "model":"..."}\\n\\n`` — the SAME json shape as
+      /api/chat, so non-stream clients lose nothing.
+    - errors mid-stream: ``event: error\\ndata: {"error": "..."}\\n\\n``
+
+    /api/chat is kept as-is for backward compatibility.
+    """
+    global _doc
+    question, err = _validate_chat_request(payload)
+    if err is not None:
+        return err
+
+    api_key = _effective_key()
+    messages, pages, hits_len = _build_chat_messages(question)
+
+    def generate():
+        full_parts: list[str] = []
+        try:
+            client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)
+            stream = client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=messages,
+                max_tokens=800,
+                temperature=0.3,
+                stream=True,
+            )
+            for chunk in stream:
+                try:
+                    delta = chunk.choices[0].delta.content or ""
+                except Exception:
+                    delta = ""
+                if delta:
+                    full_parts.append(delta)
+                    yield f"data: {json.dumps({'delta': delta})}\n\n"
+        except Exception as exc:
+            log.exception("Groq stream failed")
+            status, msg = _friendly_groq_error(exc)
+            yield f"event: error\ndata: {json.dumps({'error': msg, 'status': status})}\n\n"
+            return
+
+        answer = "".join(full_parts).strip()
+        if not answer:
+            yield f"event: error\ndata: {json.dumps({'error': 'The AI returned an empty response. Please try again.'})}\n\n"
+            return
+        _doc["history"].append({"q": question, "a": answer})
+        if len(_doc["history"]) > MAX_HISTORY_TURNS:
+            _doc["history"] = _doc["history"][-MAX_HISTORY_TURNS:]
+        final = {
+            "answer": answer,
+            "sources": pages,
+            "chunks_used": hits_len,
+            "model": GROQ_MODEL,
+        }
+        yield f"event: done\ndata: {json.dumps(final)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.delete("/api/document")

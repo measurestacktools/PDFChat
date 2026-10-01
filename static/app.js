@@ -21,6 +21,7 @@
   let keySource = null;
   let statusTimer = null;
   let hasDoc = false;
+  let chatAbort = null;
 
   function show(el) { el.hidden = false; }
   function hide(el) { el.hidden = true; }
@@ -281,6 +282,7 @@
   });
 
   removeDocBtn.addEventListener("click", async () => {
+    if (chatAbort) { try { chatAbort.abort(); } catch { /* ignore */ } chatAbort = null; }
     try {
       await fetch("/api/document", { method: "DELETE" });
     } catch { /* local UI resets regardless */ }
@@ -292,6 +294,7 @@
   const newThreadBtn = $("newThreadBtn");
   if (newThreadBtn) {
     newThreadBtn.addEventListener("click", async () => {
+      if (chatAbort) { try { chatAbort.abort(); } catch { /* ignore */ } chatAbort = null; }
       setChatError("");
       try {
         await fetch("/api/history", { method: "DELETE" });
@@ -396,36 +399,114 @@
     const q = question.value.trim();
     if (!q) { setChatError("Please type a question first."); question.focus(); return; }
     if (!hasDoc) { setChatError("No document loaded. Upload a PDF first, then ask your question."); return; }
+    // Abort any in-flight stream before starting a new one.
+    if (chatAbort) { try { chatAbort.abort(); } catch { /* ignore */ } }
+    chatAbort = new AbortController();
+    const signal = chatAbort.signal;
     question.value = "";
     addMessage("user", q);
     sendBtn.disabled = true;
-    const typing = document.createElement("div");
-    typing.className = "msg ai typing";
-    typing.innerHTML = "<i></i><i></i><i></i>";
-    typing.setAttribute("aria-label", "PDFChat is thinking");
-    messages.appendChild(typing);
+    // Streaming bubble: raw text appended live, final renderLite render on done.
+    const streamDiv = document.createElement("div");
+    streamDiv.className = "msg ai";
+    const streamBody = document.createElement("div");
+    streamDiv.appendChild(streamBody);
+    messages.appendChild(streamDiv);
     scrollChat();
+    let streamed = "";
+    const paintStreaming = () => {
+      // Plain-text live view (escaped); markdown rendered once on done.
+      streamBody.innerHTML = "<p style='margin:.4em 0'>" + escapeHtml(streamed) + "<span aria-hidden='true'>▍</span></p>";
+      scrollChat();
+    };
+    const finishStreaming = (finalText, sources, model) => {
+      streamBody.innerHTML = renderLite(finalText);
+      if (sources && sources.length) {
+        const s = document.createElement("div");
+        s.className = "sources";
+        const label = document.createElement("span");
+        label.className = "src-label";
+        label.textContent = "Sources";
+        s.appendChild(label);
+        sources.forEach((p) => {
+          const c = document.createElement("span");
+          c.className = "src-chip";
+          c.textContent = "p. " + p;
+          s.appendChild(c);
+        });
+        streamDiv.appendChild(s);
+      }
+      scrollChat();
+      if (model) {
+        modelTag.textContent = "◈ " + model;
+        modelTag.hidden = false;
+      }
+    };
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: q }),
+        signal,
       });
-      const data = await res.json().catch(() => ({}));
-      typing.remove();
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        streamDiv.remove();
         addMessage("error", data.error || ("Request failed (HTTP " + res.status + "). Please try again."));
         return;
       }
-      addMessage("ai", data.answer || "(empty response)", data.sources || []);
-      if (data.model) {
-        modelTag.textContent = "◈ " + data.model;
-        modelTag.hidden = false;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let donePayload = null;
+      let streamError = null;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf("\n\n")) !== -1) {
+          const rawEvent = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const lines = rawEvent.split("\n");
+          let evName = "message";
+          let dataStr = "";
+          for (const ln of lines) {
+            if (ln.startsWith("event:")) evName = ln.slice(6).trim();
+            else if (ln.startsWith("data:")) dataStr += ln.slice(5).trim();
+          }
+          if (!dataStr) continue;
+          let payload = null;
+          try { payload = JSON.parse(dataStr); } catch { continue; }
+          if (evName === "done") { donePayload = payload; }
+          else if (evName === "error") { streamError = payload.error || "Streaming failed. Please try again."; }
+          else if (payload.delta) { streamed += payload.delta; paintStreaming(); }
+        }
       }
-    } catch {
-      typing.remove();
-      addMessage("error", "Could not reach the server. Make sure the app is running and try again.");
+      if (streamError) {
+        streamDiv.remove();
+        addMessage("error", streamError);
+        return;
+      }
+      if (donePayload) {
+        finishStreaming(donePayload.answer || streamed || "(empty response)", donePayload.sources || [], donePayload.model);
+      } else if (streamed) {
+        // No done event (e.g. aborted edge): render what we have.
+        finishStreaming(streamed, [], null);
+      } else {
+        streamDiv.remove();
+        addMessage("error", "The stream ended without an answer. Please try again.");
+      }
+    } catch (err) {
+      if (err && err.name === "AbortError") {
+        streamDiv.remove();
+        addMessage("error", "Answer stopped — starting fresh. Ask again when ready.");
+      } else {
+        streamDiv.remove();
+        addMessage("error", "Could not reach the server. Make sure the app is running and try again.");
+      }
     } finally {
+      chatAbort = null;
       sendBtn.disabled = false;
       question.focus();
     }
