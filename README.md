@@ -4,6 +4,13 @@ PDFChat is a polished, ready-to-run **AI PDF assistant**. Upload any text-based 
 
 No database. No frontend framework. No fake responses. Just a clean FastAPI backend with a real local RAG pipeline + a premium document-workspace interface + your own Groq API key.
 
+## Tech stack
+
+- Backend: Python + FastAPI (`app.py`), served with uvicorn
+- AI: Groq chat models via the OpenAI-compatible API (`https://api.groq.com/openai/v1`)
+- RAG: pypdf extraction + local TF-IDF retrieval (pure Python, no downloads)
+- Frontend: dependency-free HTML/CSS/vanilla JS in `static/`
+
 ## Features
 
 - Drag-and-drop PDF upload with staged processing display (Uploading → Extracting text → Creating index → Ready)
@@ -21,7 +28,7 @@ No database. No frontend framework. No fake responses. Just a clean FastAPI back
 - A free Groq API key (takes ~2 minutes)
 - Internet connection (the AI call goes to Groq's API; PDF processing itself is 100% local)
 
-## Installation
+## Setup — installation
 
 ```bash
 cd PDFChat
@@ -146,7 +153,7 @@ Key files:
 - Answers capped at ~800 tokens; very long documents are chunked so only the most relevant passages are used
 - English stopwords tuned for English documents; other languages still work, slightly less precisely
 
-## Common errors
+## Troubleshooting — common errors
 
 | Message | What to do |
 |---|---|
